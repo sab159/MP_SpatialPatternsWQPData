@@ -1,0 +1,769 @@
+---
+title: "MP Data Analysis"
+author: "Sophia Bryson"
+date: "2/22/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Analysis of WQP Monitoring Data
+
+This document is intended to offer some preliminary insights into patterns in the provision and spatial distribution of water quality monitoring reported to, and available through, the Water Quality Portal.
+
+## Set up
+```{r, results = 'hide'}
+getwd()
+
+# Working directory setup 
+source_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(source_path))
+mp_wd_data <- paste0("..\\data\\")
+
+# --- Load libraries -----------------------------------------------------------
+
+  library(tidyverse)
+  library(readxl)
+  library(dataRetrieval)
+  library(sf)
+  library(lubridate)
+  library(leaflet)
+  library(mapview)
+  library(nhdplusTools)
+  library(tigris)
+  library(s2)
+  library(tidycensus)
+  library(arcpullr)
+  library(mapview)
+  library(cowplot)
+
+# --- Visualization setup ------------------------------------------------------
+  library(wesanderson)
+  #Adjust default color scales: https://community.rstudio.com/t/adding-ggplot-themes-and-color-palettes-to-a-package/2418/3
+
+  custom_theme <- theme_minimal(base_size = 11, base_family = "sans") +
+                  theme(panel.background = element_rect(fill = "azure2"),
+                        panel.grid.major = element_line(color = "azure"),
+                        panel.grid.minor = element_line(color = "azure"),
+                        axis.text = element_text(color = "azure4"),
+                        legend.position = "bottom") 
+
+  theme_set(custom_theme)
+
+# --- Misc. Setup --------------------------------------------------------------
+  # Dates & update variables
+   currentYear = year(today())
+   dataYears = 2  
+   startYear = currentYear - dataYears
+   startDate = paste0("01-01-", startYear) # 2019 corresponds with ACS survey of interest (2014-2019 aggregated data) 
+   endDate = today() %>% format('%m-%d-%Y') 
+   
+# Useful function
+   `%notin%` = function(x,y) !(x %in% y); #function to get what is not in the list
+   
+# State codes to use in a variety of functions & calls
+   statenums <- seq(1,56) %>% str_pad(width = 2, side = "left", pad = "0") #add leading zeroes to get 2 digit codes for all states
+   #remove invalid FIPS codes
+   invalid_fips = c("03", "07", "14", "43", "52") #fips codes on reserve for territories, etc. 
+   statenums <- statenums[statenums %notin% invalid_fips]
+   statecodes <- paste0("US:", statenums, ";") 
+   
+# Make sure memory limit won't limit vector allocations
+   memory.limit(36000)
+  
+# --- Load datasets ------------------------------------------------------------
+
+  #Sites (points) as df
+  sites.df  <- read.csv(file = paste0(mp_wd_data, "WQPSiteData.csv"), header = TRUE) %>% 
+               filter(is.na(x_long) == FALSE)
+  
+  #HUCs (polygons) as sf
+  huc12.sf <- st_read(paste0(mp_wd_data, "HUC12AllData.shp"))
+
+# --- Create df and sfs of each dataset ----------------------------------------
+
+  #Sites (points) as sf
+  sites.sf <- sites.df %>% st_as_sf(coords = c("x_long", "y_lat"), crs = 4269)
+  
+  #HUCS (polygons) as df
+  huc12.df <- huc12.sf %>% st_drop_geometry()
+  
+# --- Create vector groupings --------------------------------------------------
+  
+    stateAbbOrder <- huc12.df %>% filter(StatAbb != "MULT" & StatAbb != "NA") %>% .$StatAbb %>% 
+                     toupper() %>% unique() %>% sort() %>% c(., "MULT", "NA")
+    
+    EPARegionOrder <- c("Region 1", "Region 2", "Region 3", "Region 4", "Region 5", 
+                        "Region 6", "Region 7", "Region 8", "Region 9", "Region 10") 
+    #Not including the few 'NA's (hucs not within an EPA region)
+    
+    raceCols <- c("White", "Black", "Native", "Asian", "Pcfc_Is", "Other", "Mltpl_R")
+    
+    incomeCols <- c("d0to24k", "d25t49k", "d50t74k", "d75t99k", "d100124", "d125150", "d150kmr")
+      
+    ethnicityCols <- c("Nt_Hs_L", "Hspnc_L")
+
+```  
+
+## Data Overview
+
+The Water Quality Portal contains data from 2.6+ million sites. The current analysis focused only on data reflecting monitoring activities since the beginning of calendar year 2020 to present. Only sites collecting data related to water were retained, and monitoring instances for which data were flagged as rejected were excluded. 
+
+```{r}
+  #Period of record
+  print(paste0("The data reported below are for monitoring activities reported through the WQX that occurred between ",
+               format(as.Date(startDate,'%m-%d-%Y'),'%B %d, %Y'), " and ", 
+               format(as.Date(endDate,'%m-%d-%Y'),'%B %d, %Y'), " (",
+               length(seq(as.Date(startDate,'%m-%d-%Y'), as.Date(endDate,'%m-%d-%Y'), by = 'day')),
+               " days)."))
+
+  # number of monitoring sites 
+  totalMonitoringSites <- length(unique(sites.df$MonitoringLocationIdentifier))
+
+  # number of monitoring instances
+  totalMonitoringInstances <- sum(sites.df$MonitoringInstances)
+  
+  print(paste0("At the time of writing, the data represent ", totalMonitoringInstances, 
+               " unique monitoring instances at ", totalMonitoringSites, 
+               " distinct monitoring sites."))
+```
+These data are contributed by many different providers: 
+
+```{r}
+  # number of distinct providers
+  numProviders <- length(unique(sites.df$OrganizationIdentifier))
+
+  print(paste0("At the time of writing, the data represent ", numProviders, 
+               " unique providers of data."))
+```
+The monitoring data are considered for the monitoring coverage that they provide at the subwatershed (HUC12) scale. 
+
+```{r}
+  #number of huc12s
+  numHUCS <- length(unique(huc12.df$huc12))
+  
+  print(paste0("There are a total of ", numHUCS, 
+               " subwatersheds in the United States."))
+```
+
+## Monitoring Sites
+### Counts and summary stats related to the number, type, and distribution of monitoring sites
+
+There are a number of salient features of monitoring sites that can be considered:
+> + Whether they monitor surface water or groundwater
+> + Whether they monitor on a continuous or discrete basis
+> + What water quality parameters they measure
+
+```{r}
+# Total number of sites & instances
+
+  # Overall
+  print(paste0("At the time of writing, the data represent ", totalMonitoringInstances, 
+               " unique monitoring instances at ", totalMonitoringSites, 
+               " distinct monitoring sites during the period of record."))
+
+  #Instances per site
+  
+    InstancesPerSite.plot <- ggplot(sites.df, aes(x = MonitoringInstances)) +
+                             geom_histogram(binwidth = 1, fill = wes_palettes$Zissou1[4]) + 
+                             xlim(0, 25) + 
+                             labs(title = "Monitoring instance per site", 
+                                  x = "Number of monitoring instances during period of record",
+                                  y = "Number of monitoring sites")
+    InstancesPerSite.plot
+    
+    print(paste0("Monitoring sites considered reported between ", min(sites.df$MonitoringInstances),
+                 " and ", max(sites.df$MonitoringInstances), " monitoring instances during the period of record. ",
+                 "The median number of monitoring instances per site was ", median(sites.df$MonitoringInstances)))
+
+  # By state
+    NumSitesByState <- sites.df %>% group_by(StateAbb) %>% 
+                                    summarise(numSites = length(unique(MonitoringLocationIdentifier)))
+    NumSitesByState.plot <- ggplot(NumSitesByState, aes(y = numSites, x = StateAbb)) +
+                            geom_bar(stat = "identity", fill = wes_palettes$Zissou1[1]) +
+                            labs(title = "Monitoring sites by state", 
+                                 x = "State", y = "Number of monitoring sites") +
+                            scale_x_discrete(limits = stateAbbOrder) +
+                            theme(axis.text.x=element_text(angle = 90, vjust = 0.2, hjust = 1))
+    NumSitesByState.plot
+    
+    NumInstancesByState <- sites.df %>% group_by(StateAbb) %>% 
+                                        summarise(numInstances = sum(MonitoringInstances))
+    NumInstancesByState.plot <- ggplot(NumInstancesByState, aes(y = numInstances, x = StateAbb)) +
+                                geom_bar(stat = "identity", fill = wes_palettes$Zissou1[2]) +
+                                labs(title = "Monitoring instances by state", 
+                                     x = "State", y = "Number of instances sites") +
+                                scale_x_discrete(limits = stateAbbOrder) +
+                                theme(axis.text.x=element_text(angle = 90, vjust = 0.2, hjust = 1))
+    NumInstancesByState.plot
+    
+    # InstancesVsSites <- plot_grid(NumSitesByState.plot, NumInstancesByState.plot,
+    #                               align = "hv",
+    #                               nrow = 2)
+    
+  
+  # By EPA Region
+    
+    NumSitesByRegion <- sites.df %>% group_by(EPARegion) %>% 
+                                     summarise(numSites = length(unique(MonitoringLocationIdentifier)))
+    NumSitesByRegion.plot <- ggplot(NumSitesByRegion, aes(y = numSites, x = EPARegion)) +
+                             geom_bar(stat = "identity", fill = wes_palettes$Zissou1[1]) +
+                             labs(title = "Monitoring sites by EPA Region", 
+                                  x = "EPA Region", y = "Number of monitoring sites") +
+                             scale_x_discrete(limits = EPARegionOrder) +
+                             theme(axis.text.x=element_text(angle = 45, hjust = 1))
+    NumSitesByRegion.plot
+    
+    
+    NumInstancesByRegion <- sites.df %>% group_by(EPARegion) %>% 
+                                        summarise(numInstances = sum(MonitoringInstances))
+    NumInstancesByRegion.plot <- ggplot(NumInstancesByRegion, aes(y = numInstances, x = EPARegion)) +
+                                 geom_bar(stat = "identity", fill = wes_palettes$Zissou1[2]) +
+                                 labs(title = "Monitoring instances by EPA Region", 
+                                      x = "EPA Region", y = "Number of monitoring instances") +
+                                 scale_x_discrete(limits = EPARegionOrder) +
+                                 theme(axis.text.x=element_text(angle = 45, hjust = 1))
+    NumInstancesByRegion.plot
+  
+
+```
+
+Further analyses in this document will focus on monitoring sites, rather than monitoring instances, as this was the metric used in determining level of monitoring coverage at the subwatershed scale. The proportion of monitoring instances to monitoring sites is relatively consistent across states and EPA regions.
+
+```{r}
+# Number of sites normalized to land area and/ or population
+
+  # Overall
+
+  # By state
+
+  # By EPA Region
+
+```
+
+
+
+```{r}
+# Type of water measured
+
+  # Overall
+  print(paste0("At the time of writing, ", 
+               nrow(sites.df %>% filter(MonitoringLocTypeClass == "Surface water")), 
+               " sites (", 
+               round(nrow(sites.df %>% filter(MonitoringLocTypeClass == "Surface water"))*100/nrow(sites.df), 2),          
+               "%) monitor surface water. ",
+                nrow(sites.df %>% filter(MonitoringLocTypeClass == "Groundwater")), 
+               " sites (", 
+               round(nrow(sites.df %>% filter(MonitoringLocTypeClass == "Groundwater"))*100/nrow(sites.df), 2),              
+               "%) monitor groundwater. The remaining ",
+               nrow(sites.df %>% filter(MonitoringLocTypeClass %notin% c("Surface water", "Groundwater"))),
+               " sites (",
+               round(nrow(sites.df %>% filter(MonitoringLocTypeClass %notin% c("Surface water", "Groundwater")))*100/nrow(sites.df), 2),
+               "%) measure other media or forms of water."))
+
+  # By state
+    NumSitesByStateSource <- sites.df %>% group_by(StateAbb, MonitoringLocTypeClass) %>% 
+                                          summarise(numSites = length(unique(MonitoringLocationIdentifier)))
+    NumSitesByStateSource.plot <- ggplot(NumSitesByStateSource, 
+                                         aes(y = numSites, x = StateAbb, fill = MonitoringLocTypeClass)) +
+                                  geom_bar(stat = "identity") +
+                                  scale_fill_manual(limits = c("Surface water", "Groundwater", "Other"),
+                                                    values = c(wes_palettes$Zissou[2], wes_palettes$Zissou1[4],
+                                                               wes_palettes$Zissou1[5], wes_palettes$Zissou1[3])) +
+                                  labs(title = "Number of monitoring sites by water class", x = "State", 
+                                       y = "Number of sites", fill = "Monitoring Location Classification") +
+                                  scale_x_discrete(limits = stateAbbOrder) +
+                                  theme(axis.text.x = element_text(angle = 90, vjust = 0.2, hjust = 1),
+                                        legend.title = element_blank()) 
+    
+    NumSitesByStateSource.plot
+
+  # By EPA Region
+    NumSitesByRegionSource <- sites.df %>% group_by(EPARegion, MonitoringLocTypeClass) %>% 
+                                        summarise(numSites = length(unique(MonitoringLocationIdentifier)))
+    NumSitesByRegionSource.plot <- ggplot(NumSitesByRegionSource, 
+                                          aes(y = numSites, x = EPARegion, fill = MonitoringLocTypeClass)) +
+                                   geom_bar(stat = "identity") +
+                                   scale_fill_manual(limits = c("Surface water", "Groundwater", "Other"),
+                                                      values = c(wes_palettes$Zissou[2], wes_palettes$Zissou1[4],
+                                                                 wes_palettes$Zissou1[5], wes_palettes$Zissou1[3])) +
+                                   scale_x_discrete(limits = EPARegionOrder) +
+                                   theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+                                         legend.title = element_blank()) + 
+                                   labs(title = "Number of monitoring sites by water class", x = "EPA Region", 
+                                         y = "Number of sites", fill = "Monitoring Location Classification") 
+
+    NumSitesByRegionSource.plot
+
+```
+
+```{r}
+# Monitoring frequency (discrete vs continuous)
+
+  # Overall
+  print(paste0("At the time of writing, ", 
+               nrow(sites.df %>% filter(OccClass == "Continuous")),
+               " sites (",
+               round(nrow(sites.df %>% filter(OccClass == "Continuous"))*100/nrow(sites.df), 2),
+               "%) provided continuous monitoring while the remaining ",
+               nrow(sites.df %>% filter(OccClass == "Discrete")),
+               " sites (",
+               round(nrow(sites.df %>% filter(OccClass == "Discrete"))*100/nrow(sites.df), 2),
+               "%) provided discrete monitoring."))
+
+
+  # By state 
+    NumSitesByStateOccClass <- sites.df %>% group_by(StateAbb, OccClass) %>% 
+                                            summarise(numSites = length(unique(MonitoringLocationIdentifier)))
+    NumSitesByStateOccClass.plot <- ggplot(NumSitesByStateOccClass, 
+                                         aes(y = numSites, x = StateAbb, fill = OccClass)) +
+                            geom_bar(stat = "identity") +
+                            scale_x_discrete(limits = stateAbbOrder) +
+                            scale_fill_manual(limits = c("Continuous", "Discrete"),
+                                              values = c(wes_palettes$Cavalcanti1[5],
+                                                         wes_palettes$Cavalcanti1[4])) +
+                            labs(title = "Number of monitoring sites by monitoring classification", 
+                                 x = "State", y = "Number of sites", 
+                                 fill = "Monitoring Location Classification") +
+                            theme(axis.text.x = element_text(angle = 90, vjust = 0.2, hjust = 1),
+                                  legend.title = element_blank()) 
+    
+    NumSitesByStateOccClass.plot
+
+
+  # By EPA Region
+    NumSitesByRegionOccClass <- sites.df %>% group_by(EPARegion, OccClass) %>% 
+                                             summarise(numSites = length(unique(MonitoringLocationIdentifier)))
+    NumSitesByRegionOccClass.plot <- ggplot(NumSitesByRegionOccClass, 
+                                            aes(y = numSites, x = EPARegion, fill = OccClass)) +
+                                     geom_bar(stat = "identity") +
+                                     scale_fill_manual(limits = c("Continuous", "Discrete"),
+                                                       values = c(wes_palettes$Cavalcanti1[5],
+                                                                  wes_palettes$Cavalcanti1[4])) +
+                                     scale_x_discrete(limits = EPARegionOrder) +
+                                     labs(title = "Number of monitoring sites by monitoring classification", 
+                                          x = "EPA Region", y = "Number of sites", 
+                                          fill = "Monitoring Location Classification") +
+                                     theme(axis.text.x = element_text(angle = 45, hjust = 1),
+                                           legend.title = element_blank()) 
+    
+    NumSitesByRegionOccClass.plot
+
+```
+
+```{r}
+# Parameters Measured
+
+  # Overall
+
+  # By state
+
+  # By EPA Region
+
+```
+
+## Monitoring at the subwatershed scale
+### Overview of monitoring of subwatersheds
+
+A subwatershed was considered to be "monitored" if it contained a monitoring site, or if it was immediately downstream from another huc12 that contained a monitoring site.
+
+```{r}
+# Percent/proportion of monitored subwatersheds
+
+  # Overall
+  HUCMonitoring <- huc12.df %>% group_by(monitrd) %>% summarise(numHUCs = n()) 
+  HUCMonitoring <- HUCMonitoring %>% mutate(perHUCs = round(numHUCs*100/sum(numHUCs), 2))
+  
+  print(paste0("Nationwide, ", HUCMonitoring$numHUCs[1], " subwatersheds (",
+               HUCMonitoring$perHUCs[1], "%) are classified as monitored. ",
+               HUCMonitoring$numHUCs[2], " subwatersheds (",
+               HUCMonitoring$perHUCs[2], "%) are classified as unmonitored."))
+  
+  # By state
+    MonHucsByState <- huc12.df %>% group_by(StatAbb, monitrd) %>% 
+                                   summarise(numHUCS = length(unique(huc12)))
+    MonHucsByState.plot <- ggplot(MonHucsByState, 
+                                  aes(y = numHUCS, x = StatAbb, fill = monitrd)) +
+                           geom_bar(stat = "identity") +
+                           scale_x_discrete(limits = stateAbbOrder) +
+                           scale_fill_manual(limits = c("monitored", "unmonitored"),
+                                              values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
+                           labs(title = "Subwatershed monitoring by state", x = "State", 
+                                y = "Number of HUC12 subwatersheds") +
+                           theme(axis.text.x = element_text(angle = 90, vjust = 0.2, hjust = 1),
+                                 legend.title = element_blank()) 
+     
+    MonHucsByState.plot                                           
+
+  # By EPA Region
+    MonHucsByRegion <- huc12.df %>% group_by(EPAregn, monitrd) %>% 
+                                    summarise(numHUCS = length(unique(huc12)))
+    
+    MonHucsByRegion.plot <- ggplot(MonHucsByRegion, 
+                                   aes(y = numHUCS, x = EPAregn, fill = monitrd)) +
+                            geom_bar(stat = "identity") +
+                            scale_x_discrete(limits = EPARegionOrder) +
+                            scale_fill_manual(limits = c("monitored", "unmonitored"),
+                                              values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
+                            labs(title = "Subwatershed monitoring by EPA region", x = "EPA Region", 
+                                 y = "Number of HUC12 subwatersheds") +
+                            theme(axis.text.x = element_text(angle = 45, hjust = 1),
+                                           legend.title = element_blank()) 
+    
+    MonHucsByRegion.plot 
+
+```
+
+## Data providers
+### Counts and summary stats related to the number, type, and distribution of data providers
+
+Data provided through the WQP represent a variety of provider types: federal, tribal, state, and municipal governance agencies, NGOs, academic institutions, and private sector firms all contribute data to the water quality portal.
+
+```{r}
+# Provider groups as percent of total providers
+
+  # Overall
+
+  # By state
+
+  # By EPA Region
+
+```
+
+```{r}
+# Provider groups as percent of total sites
+
+  # Overall
+
+  # By state
+
+  # By EPA Region
+
+```
+
+```{r}
+# Provider groups as percent of total instances
+
+  # Overall
+
+  # By state
+
+  # By EPA Region
+
+```
+
+## Monitoring coverage & Human Populations
+
+```{r}
+# Percent of population living in monitored HUCs
+
+  # Overall
+    populationMonitoring <- huc12.df %>% group_by(monitrd) %>% 
+                                         summarise(numPpl = sum(Ttl_Ppl, na.rm = TRUE)) %>% 
+                                         mutate(perPpl = round(numPpl*100/sum(numPpl), 2))
+    # NAs arising from sites without a state
+    
+    householdMonitoring <- huc12.df %>% group_by(monitrd) %>% 
+                                        summarise(numHH = sum(Totl_HH, na.rm = TRUE)) %>% 
+                                        mutate(perHH = round(numHH*100/sum(numHH), 2))
+    
+    print(paste0(as.character(populationMonitoring[1, 'perPpl']), 
+                 "% of the population and ",
+                 as.character(householdMonitoring[1, 'perHH']), 
+                 "% of households ",
+                 "are located within subwatersheds covered by water quality monitoring."))
+
+  # By state
+    
+    PopMonByState <- huc12.df %>% group_by(StatAbb, monitrd) %>% 
+                                  summarise(numPpl = sum(Ttl_Ppl, na.rm = TRUE)) %>% 
+                                  mutate(perPpl = round(numPpl*100/sum(numPpl), 2))
+    PopMonByState.plot <- ggplot(PopMonByState, 
+                                 aes(y = numPpl, x = StatAbb, fill = monitrd)) +
+                           geom_bar(stat = "identity") +
+                           scale_x_discrete(limits = stateAbbOrder) +
+                           scale_fill_manual(limits = c("monitored", "unmonitored"),
+                                              values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
+                           labs(title = "Subwatershed monitoring by state", x = "State", 
+                                y = "Population") +
+                           theme(axis.text.x = element_text(angle = 90, vjust = 0.2, hjust = 1),
+                                 legend.title = element_blank()) 
+     
+    PopMonByState.plot 
+    
+    (PerPopMonByState <- PopMonByState %>% filter(monitrd == "monitored") %>% 
+                                           select(StatAbb, perPpl) %>% 
+                                           rename(PercentPopMonitored = perPpl, 
+                                                  state = StatAbb) %>% 
+                                           arrange(-PercentPopMonitored))
+    
+  # By EPA region
+    
+    PopMonByRegion <- huc12.df %>% group_by(EPAregn, monitrd) %>% 
+                                  summarise(numPpl = sum(Ttl_Ppl, na.rm = TRUE)) %>% 
+                                  mutate(perPpl = round(numPpl*100/sum(numPpl), 2))
+    PopMonByRegion.plot <- ggplot(PopMonByRegion, 
+                                 aes(y = numPpl, x = EPAregn, fill = monitrd)) +
+                           geom_bar(stat = "identity") +
+                           scale_x_discrete(limits = EPARegionOrder) +
+                           scale_fill_manual(limits = c("monitored", "unmonitored"),
+                                             values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
+                           labs(title = "Subwatershed monitoring by EPA region", 
+                                x = "EPA Region", y = "Population") +
+                           theme(axis.text.x = element_text(angle = 45, hjust = 1),
+                                           legend.title = element_blank()) 
+     
+    PopMonByRegion.plot 
+    
+    (PerPopMonByRegion <- PopMonByRegion %>% filter(monitrd == "monitored") %>% 
+                                             select(EPAregn, perPpl) %>% 
+                                             rename(PercentPopMonitored = perPpl,
+                                                    EPARegion = EPAregn) %>% 
+                                             arrange(-PercentPopMonitored))
+    
+    
+```
+
+
+## Monitoring coverage & race
+
+```{r}
+# Racial composition of monitored vs. unmonitored HUCS
+
+  # The question here is whether the racial makeup of subwatersehds differs between monitored and unmonitored hucs
+
+  # Overall - percent of population comprised of each race in monitored vs. unmonitored hucs
+    raceMonitoredHUCS <- huc12.df %>% group_by(monitrd) %>% 
+                                      summarise(nPpl = sum(Ttl_Ppl, na.rm = TRUE),
+                                                White = sum(White, na.rm = TRUE),
+                                                Black = sum(Black, na.rm = TRUE), 
+                                                Native = sum(Native, na.rm = TRUE), 
+                                                Asian = sum(Asian, na.rm = TRUE), 
+                                                Pcfc_Is = sum(Pcfc_Is, na.rm = TRUE),
+                                                Other = sum(Other, na.rm = TRUE),
+                                                Mltpl_R = sum(Mltpl_R, na.rm = TRUE)) %>% 
+                                      pivot_longer(cols = raceCols, 
+                                                   names_to = "Race") %>% 
+                                      rename(population = value) %>% 
+                                      mutate(perPopulation = round(population*100/sum(population), 2)) %>% 
+                                      mutate(Race = case_when(Race == "Pcfc_Is" ~ "Pacific Islander",
+                                                              Race == "Mltpl_R" ~ "Multiple Races",
+                                                              Race == "White" ~ "White",
+                                                              Race == "Black" ~ "Black",
+                                                              Race == "Asian" ~ "Asian",
+                                                              Race == "Native" ~ "Native American",
+                                                              Race == "Other" ~ "Other"))
+  
+    raceMonitoredHUCS.plot <- ggplot(raceMonitoredHUCS, 
+                                     aes(x = monitrd, y = population, fill = Race)) + 
+                              geom_bar(stat = "identity") + 
+                              scale_x_discrete(limits = c("monitored", "unmonitored")) +
+                              scale_fill_manual(limits = c("Asian", "Black", "Native American",
+                                                           "Pacific Islander", "White", "Other",
+                                                           "Multiple Races"), 
+                                                values = c(wes_palettes$Royal1, wes_palettes$Cavalcanti1)) +
+                              labs(title = "Racial compositon of population living within monitored and unmonitored subwatersheds", 
+                                   x = "", y = "Population") +
+                              theme(legend.title = element_blank()) +
+                              guides(fill = guide_legend(byrow = TRUE))
+                              
+  
+    raceMonitoredHUCS.plot
+    # percent White higher in unmonitored than monitored 
+
+
+  # By state
+    raceMonitoredHUCSByState <- huc12.df %>% group_by(StatAbb, monitrd) %>% 
+                                             summarise(White = sum(White, na.rm = TRUE),
+                                                       Black = sum(Black, na.rm = TRUE), 
+                                                       Native = sum(Native, na.rm = TRUE), 
+                                                       Asian = sum(Asian, na.rm = TRUE), 
+                                                       Pcfc_Is = sum(Pcfc_Is, na.rm = TRUE),
+                                                       Other = sum(Other, na.rm = TRUE),
+                                                       Mltpl_R = sum(Mltpl_R, na.rm = TRUE)) %>% 
+                                             pivot_longer(cols = raceCols, 
+                                                          names_to = "Race") %>% 
+                                             rename(population = value) %>% 
+                                             mutate(perPopulation = round(population*100/sum(population), 2))
+    
+
+  # By EPA Region
+    raceMonitoredHUCSByRegion <- huc12.df %>% group_by(EPAregn, monitrd) %>% 
+                                              summarise(White = sum(White, na.rm = TRUE),
+                                                        Black = sum(Black, na.rm = TRUE), 
+                                                        Native = sum(Native, na.rm = TRUE), 
+                                                        Asian = sum(Asian, na.rm = TRUE), 
+                                                        Pcfc_Is = sum(Pcfc_Is, na.rm = TRUE),
+                                                        Other = sum(Other, na.rm = TRUE),
+                                                        Mltpl_R = sum(Mltpl_R, na.rm = TRUE)) %>% 
+                                               pivot_longer(cols = raceCols, 
+                                                            names_to = "Race") %>% 
+                                               rename(population = value) %>% 
+                                               mutate(perPopulation = round(population*100/sum(population), 2))
+
+
+```
+
+```{r}
+# Percent of each racial group living in monitored vs. unmonitored HUCS
+
+  # Overall
+  coverageRacialPop <- huc12.df %>% pivot_longer(cols = raceCols, names_to = "Race") %>% 
+                                    rename(population = value) %>% 
+                                    group_by(Race, monitrd) %>% 
+                                    summarise(Ppl = sum(population, na.rm = TRUE)) %>% 
+                                    pivot_wider(names_from = monitrd, 
+                                                values_from = Ppl) %>% 
+                                    mutate(total = sum(monitored, unmonitored, `NA`),
+                                           perMon = round(monitored*100/total, 2),
+                                           perUnmon = round(unmonitored*100/total, 2),
+                                           perNA = round(`NA`*100/total, 2))
+  coverageRacialPop
+  
+  #Reformat for plotting
+  crp <- coverageRacialPop %>% mutate(unmonitored = unmonitored + `NA`) %>% 
+                               select(Race, monitored, unmonitored) %>%
+                               pivot_longer(cols = c(monitored, unmonitored), 
+                                            names_to = "monitoring") %>%
+                               rename(nPpl = value) %>%                                       
+                               mutate(Race = case_when(Race == "Pcfc_Is" ~ "Pacific Islander",
+                                                       Race == "Mltpl_R" ~ "Multiple Races",
+                                                       Race == "White" ~ "White",
+                                                       Race == "Black" ~ "Black",
+                                                       Race == "Asian" ~ "Asian",
+                                                       Race == "Native" ~ "Native American",
+                                                       Race == "Other" ~ "Other"))
+
+  coverageRacialPop.plot <- ggplot(crp, aes(x = Race, y = nPpl, fill = monitoring)) + 
+                            geom_bar(stat = "identity") + 
+                            scale_fill_manual(limits = c("monitored", "unmonitored"),
+                                                values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
+                            scale_x_discrete(limits = c("White", "Black", "Asian", 
+                                                        "Native American", "Pacific Islander", 
+                                                        "Other", "Multiple Races")) +
+                            labs(title = "Proportion of population by race living within monitored and unmonitored subwatersheds", 
+                                   x = "", y = "Population") +
+                            theme(axis.text.x = element_text(angle = 45, hjust = 1),
+                                  legend.title = element_blank()) 
+  
+  coverageRacialPop.plot
+                            
+
+
+  # By state
+
+  # By EPA Region
+
+```
+
+## Monitoring coverage & ethnicity
+
+```{r}
+# Ethnic composition of monitored vs. unmonitored HUCS
+
+  # Overall
+
+  # By state
+
+  # By EPA Region
+
+```
+
+```{r}
+# Percent of each ethnic group living in monitored vs. unmonitored HUCS
+
+  # Overall
+    coverageEthnicPop <- huc12.df %>% pivot_longer(cols = c(Nt_Hs_L, Hspnc_L), names_to = "Ethnicity") %>% 
+                                      rename(population = value) %>% 
+                                      group_by(Ethnicity, monitrd) %>% 
+                                      summarise(Ppl = sum(population, na.rm = TRUE)) %>% 
+                                      pivot_wider(names_from = monitrd, 
+                                                  values_from = Ppl) %>% 
+                                      mutate(total = sum(monitored, unmonitored, `NA`),
+                                             perMon = round(monitored*100/total, 2),
+                                             perUnmon = round(unmonitored*100/total, 2),
+                                             perNA = round(`NA`*100/total, 2))
+    coverageEthnicPop
+
+
+  # By state
+
+  # By EPA Region
+
+```
+
+
+## Monitoring coverage & income
+
+!!! How best to represent this? Semi-continuous, classfiied as discrete.... Ask Lauren & Kyle
+
+```{r}
+# Income composition of monitored vs. unmonitored HUCS
+
+# Overall
+
+# By State
+
+# By Region
+
+
+```
+
+```{r}
+# Income states (mean, median, quantiles) of monitored vs. unmonitored hucs
+
+# Overall
+
+# By State
+
+# By Region
+
+
+```
+
+
+```{r}
+# Percent of each income bracket living in monitored vs. unmonitored HUCS
+
+# Overall
+
+# By State
+
+# By Region
+
+```
+
+
+## Population density / Urban-Rural divide
+
+```{r}
+# Look at population density
+popdens.df <- huc12.df %>% mutate(popDens = Ttl_Ppl/aresqkm) %>% 
+                           select(StatAbb, huc12, name, EPAregn, ststtrb, popDens)
+
+ggplot(popdens.df, aes(x = popDens, y = ststtrb)) +
+  geom_point(alpha = 0.2, color = "cornflowerblue") + 
+  geom_smooth(method = "lm") + 
+  scale_x_log10() +
+  ylim(c(0, 250)) +
+  labs(x = "Population density (People/sq km)")
+
+popdens.df <- popdens.df %>% filter(popDens > 0)
+lm(log10(popDens) ~ ststtrb, data = popdens.df) %>% summary()
+
+```
+```{r}
+# Look at places 
+
+
+```
+
+
+** Further questions:
+
++ What if we consider degree of monitoring, rather than binary monitored/unmonitored?
+  - Frequency, thoroughness, etc.
++ Race and ethnicity don't seem to be predictors of lower monitoring. Is this a matter of autocorrelation with rural/urban populations? 
++ Tribal groups provide a substantial amount of the data, yet Native Americans are among those least served by monitoring - what causes this? 

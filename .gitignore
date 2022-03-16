@@ -1,0 +1,7 @@
+code_nonupload/
+data/HUC12AllData*
+data/ToHUC.csv
+data/WQPSiteData.csv
+data/parameterPrevalence.csv
+data/ProviderList.csv
+data/TEMP_NewProvidersToClassify.csv

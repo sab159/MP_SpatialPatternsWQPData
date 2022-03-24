@@ -1,7 +1,7 @@
 Code created by Sophia Bryson (sab159@duke.edu) for Masters Project at the Nicholas School of the Environment at Duke University. 
 MP completed with Blair Johnson (bsj9@duke.edu) for client Internet of Water, 2021 - 2022.
 
-These scripts create the data powering the dashboard found at _____<LINK HERE>____ examining the spatial distribution of Water Quality Portal data. 
+These scripts create the data powering the dashboard found at https://www.arcgis.com/apps/dashboards/0dbe111a2c1542a4a1ff01387b037d13 examining the spatial distribution of Water Quality Portal data. 
 
 Scripts should be run in this order: 
 0_SetEnvirons.R - before running any other scripts, to configure workspace

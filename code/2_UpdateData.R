@@ -24,8 +24,8 @@
   huc12 <- st_read(paste0(mp_wd_data, "HUC12AllData.shp")) %>% 
            select(huc12, name, states, EPAregn, aresqkm, tohucs, 
                   Ttl_Ppl, White, Black, Native, Asian, Pcfc_Is, Other, Mltpl_R,
-                  Totl_HH, d0to24k, d25t49k, d50t74k, d75t99k, d100124, d125150, d150kmr,
-                  Totl_Pp, Nt_Hs_L, Hspnc_L)
+                  Totl_HH, mnMdHHI, d0to24k, d25t49k, d50t74k, d75t99k, d100124, d125150, d150kmr,
+                  Totl_Pp, Nt_Hs_L, Hspnc_L) 
   
   
 # --- Calibrate to last update -------------------------------------------------
@@ -96,7 +96,7 @@
 # --- Combine old and new sites metadata ---------------------------------------
   
   new.metadata <- reprojected.sites
-  old.metadata <- old.sites %>% select(names(reprojected.sites))
+  old.metadata <- read.csv(file = paste0(mp_wd_data, "AllWQPSiteMetadata.csv")) %>% select(names(reprojected.sites))
   reprojected.sites <- rbind(old.metadata, new.metadata) #updated metadata for use in following loop
   
 # --- Pull monitoring data -----------------------------------------------------
@@ -176,9 +176,10 @@
       # check if it's missing metadata and pull if so to prevent NAs further down
       missing.metadata <- siteData %>% filter(MonitoringLocationIdentifier %notin% reprojected.sites$MonitoringLocationIdentifier)
       
-      if(nrow(missing.metadata > 0)) { #Only run if any selected sites are missing metadata
+      if(nrow(missing.metadata > 0)) { #Only run if any selected sites are missing metadata - safety net
         
-        missed.metadata <- whatWQPsites(siteid = missing.metadata$MonitoringLocationIdentifier)
+        missed.sites <- unique(missing.metadata$MonitoringLocationIdentifier) %>% .[substr(., 1, 8) != "TOHONOO'"] #manually remove site ID that can's be pulled due to ' (various)
+        missed.metadata <- whatWQPsites(siteid = missed.sites)
         
           filtered.sites <- missed.metadata %>% select(OrganizationIdentifier, OrganizationFormalName, ProviderName, #organization metadata - organization vs. provider? 
                                                  MonitoringLocationIdentifier, MonitoringLocationName, MonitoringLocationTypeName, #site metadata - left out description
@@ -224,14 +225,13 @@
           reprojected.new.sites <- reprojected.new.sites %>% mutate(x_long = unlist(map(reprojected.new.sites$geometry, 1)), 
                                                                     y_lat = unlist(map(reprojected.new.sites$geometry, 2))) %>% 
                                                              st_drop_geometry()
-          
         #Merge all metadata
         reprojected.sites <- rbind(reprojected.new.sites, reprojected.sites)
       }
       
       #Check out the data
       summary(siteData)
-      length(unique(siteData$MonitoringLocationIdentifier)) #46599 sites with data. 
+      length(unique(siteData$MonitoringLocationIdentifier)) 
       
       #Are they distinct? Keep only distinct records 
       siteData <- distinct(siteData) #A few duplicate records. Unsure why, but now all distinct.
@@ -267,49 +267,49 @@
       # Drop 'Characteristic name' as that has been summarized into the parameter counts
       
       MonInstanceParSummary <- siteData_parClass %>% group_by(ActivityIdentifier) %>% 
-        summarise(MonitoringLocationIdentifier = first(MonitoringLocationIdentifier),
-                  OrganizationIdentifier = first(OrganizationIdentifier),
-                  OrganizationFormalName = first(OrganizationFormalName),
-                  ActivityTypeCode = first(ActivityTypeCode),
-                  ActivityMediaName = first(ActivityMediaName),
-                  ActivityMediaSubdivisionName = first(ActivityMediaSubdivisionName),
-                  ActivityStartDate = first(ActivityStartDate),
-                  ProjectIdentifier = first(ProjectIdentifier), 
-                  ActivityConductingOrganizationText = first(ActivityConductingOrganizationText),
-                  ProviderName = first(ProviderName),
-                  BasicWQ = sum(Basic_WQ_Bool),
-                  SDWAPrimary = sum(SDWA_Primary_Bool),
-                  SDWASecondary = sum(SDWA_Secondary_Bool),
-                  CWA_HH = sum(CWA_HH_Bool),
-                  CWA_AL = sum(CWA_AL_Bool),
-                  CWA_O = sum(CWA_O_Bool),
-                  Other = sum(Other_Par_Bool),
-                  .groups = "drop")
+                                                      summarise(MonitoringLocationIdentifier = first(MonitoringLocationIdentifier),
+                                                                OrganizationIdentifier = first(OrganizationIdentifier),
+                                                                OrganizationFormalName = first(OrganizationFormalName),
+                                                                ActivityTypeCode = first(ActivityTypeCode),
+                                                                ActivityMediaName = first(ActivityMediaName),
+                                                                ActivityMediaSubdivisionName = first(ActivityMediaSubdivisionName),
+                                                                ActivityStartDate = first(ActivityStartDate),
+                                                                ProjectIdentifier = first(ProjectIdentifier), 
+                                                                ActivityConductingOrganizationText = first(ActivityConductingOrganizationText),
+                                                                ProviderName = first(ProviderName),
+                                                                BasicWQ = sum(Basic_WQ_Bool),
+                                                                SDWAPrimary = sum(SDWA_Primary_Bool),
+                                                                SDWASecondary = sum(SDWA_Secondary_Bool),
+                                                                CWA_HH = sum(CWA_HH_Bool),
+                                                                CWA_AL = sum(CWA_AL_Bool),
+                                                                CWA_O = sum(CWA_O_Bool),
+                                                                Other = sum(Other_Par_Bool),
+                                                                .groups = "drop")
       #check the outputs
       summary(MonInstanceParSummary)
       
       # Aggregate to sites
       # Aggregate and then sum up - how many *UNIQUE* parameters have been measured at a site within the period of interest?
       SiteParSummary <- siteData_parClass %>% group_by(MonitoringLocationIdentifier) %>%
-        distinct(MonitoringLocationIdentifier, CharacteristicName, .keep_all = TRUE) %>% #get unique parameters measured at each location within past 2 years (some loss of resolution here - will not be able to filter for when these were measured, unless separate columns were made for each time frame of interest... )
-        summarise(OrganizationIdentifier = first(OrganizationIdentifier),
-                  OrganizationFormalName = first(OrganizationFormalName),
-                  ActivityTypeCode = first(ActivityTypeCode),
-                  ActivityMediaName = first(ActivityMediaName),
-                  ActivityMediaSubdivisionName = first(ActivityMediaSubdivisionName),
-                  ActivityStartDate = first(ActivityStartDate),
-                  ProjectIdentifier = first(ProjectIdentifier), 
-                  ActivityConductingOrganizationText = first(ActivityConductingOrganizationText),
-                  ProviderName = first(ProviderName),
-                  MonitoringInstances = length(unique(ActivityIdentifier)),
-                  BasicWQ = sum(Basic_WQ_Bool),
-                  SDWAPrimary = sum(SDWA_Primary_Bool),
-                  SDWASecondary = sum(SDWA_Secondary_Bool),
-                  CWA_HH = sum(CWA_HH_Bool),
-                  CWA_AL = sum(CWA_AL_Bool),
-                  CWA_O = sum(CWA_O_Bool),
-                  Other = sum(Other_Par_Bool),
-                  .groups = "drop")
+                                              distinct(MonitoringLocationIdentifier, CharacteristicName, .keep_all = TRUE) %>% #get unique parameters measured at each location within past 2 years (some loss of resolution here - will not be able to filter for when these were measured, unless separate columns were made for each time frame of interest... )
+                                              summarise(OrganizationIdentifier = first(OrganizationIdentifier),
+                                                        OrganizationFormalName = first(OrganizationFormalName),
+                                                        ActivityTypeCode = first(ActivityTypeCode),
+                                                        ActivityMediaName = first(ActivityMediaName),
+                                                        ActivityMediaSubdivisionName = first(ActivityMediaSubdivisionName),
+                                                        ActivityStartDate = first(ActivityStartDate),
+                                                        ProjectIdentifier = first(ProjectIdentifier), 
+                                                        ActivityConductingOrganizationText = first(ActivityConductingOrganizationText),
+                                                        ProviderName = first(ProviderName),
+                                                        MonitoringInstances = length(unique(ActivityIdentifier)),
+                                                        BasicWQ = sum(Basic_WQ_Bool),
+                                                        SDWAPrimary = sum(SDWA_Primary_Bool),
+                                                        SDWASecondary = sum(SDWA_Secondary_Bool),
+                                                        CWA_HH = sum(CWA_HH_Bool),
+                                                        CWA_AL = sum(CWA_AL_Bool),
+                                                        CWA_O = sum(CWA_O_Bool),
+                                                        Other = sum(Other_Par_Bool),
+                                                        .groups = "drop")
       #This gives the classifications of the unique parameters measured at each monitoring location within the past 2 years (record period)
       
       # Determine whether sites are discrete or continuous... 
@@ -324,7 +324,7 @@
       
       #Determine which sites are current
       Recency <- DaysBw %>% group_by(MonitoringLocationIdentifier) %>% 
-        summarize(min(ActivityStartDate), max(ActivityStartDate)) 
+                            summarize(min(ActivityStartDate), max(ActivityStartDate)) 
       
       #check if monitoring is still occurring (within past 35 days)
       DaysSinceMon <- today() - Recency$`max(ActivityStartDate)`
@@ -340,7 +340,7 @@
       #Continuous: filter for sites where "current" = TRUE and "new" = FALSE and max(dayDiff) < 35  
       #Discrete: any others.
       OccurrenceClassification <- Recency %>% mutate(OccClass = ifelse((currentBool == TRUE & newBool == FALSE), "Continuous", "Discrete")) %>% #occurrence class - either discrete or continuous
-        rename(EarliestDate = `min(ActivityStartDate)`, MostRecentDate = `max(ActivityStartDate)`)
+                                              rename(EarliestDate = `min(ActivityStartDate)`, MostRecentDate = `max(ActivityStartDate)`)
       
       #Now remerge to site metadata!
       
@@ -383,14 +383,14 @@
                                       BasicWQ, SDWAPrimary, SDWASecondary, CWA_HH, CWA_AL, CWA_O, Other,
                                       EarliestDate, MostRecentDate, DaysSinceMon, currentBool, DaysSinceStart, newBool, OccClass,
                                       InitHorCoorRefSysDatumName, x_long, y_lat) %>%
-      rename(OrganizationIdentifier = OrganizationIdentifier.x, OrganizationFormalName = OrganizationFormalName.x,
-             ProviderName = ProviderName.x)
+                              rename(OrganizationIdentifier = OrganizationIdentifier.x, OrganizationFormalName = OrganizationFormalName.x,
+                                     ProviderName = ProviderName.x)
     
     #Add provider classifications to site data:
     
     #pull in manual classification of providers
     providerClassification <- read_xlsx(paste0(mp_wd_data, "ProviderListClassified.xlsx"), sheet = "ProviderList") %>% 
-      select(OrganizationIdentifier, OrganizationFormalName, OrganizationTypeClassification)
+                              select(OrganizationIdentifier, OrganizationFormalName, OrganizationTypeClassification)
     
     #identify and saveout list of new providers needing classification
     newProv <- providerList %>% filter(OrganizationIdentifier %notin% providerClassification$OrganizationIdentifier) %>% distinct() #label these as "not yet classified"
@@ -410,12 +410,13 @@
                                       BasicWQ, SDWAPrimary, SDWASecondary, CWA_HH, CWA_AL, CWA_O, Other,
                                       EarliestDate, MostRecentDate, DaysSinceMon, currentBool, DaysSinceStart, newBool, OccClass,
                                       InitHorCoorRefSysDatumName, x_long, y_lat) %>%
-      rename(OrganizationFormalName = OrganizationFormalName.x)
+                              rename(OrganizationFormalName = OrganizationFormalName.x)
     
     
     #Save out:
-    # #Updated site (meta)data - FURTHER DOWN
-    # write.csv(sitesData, file = paste0(mp_wd_data, "WQPSiteData.csv"), row.names = FALSE)
+    
+    # csv saveout of site metadata 
+    write.csv(reprojected.sites, file = paste0(mp_wd_data, "AllWQPSiteMetadata.csv"), row.names = FALSE)
     
     #Export provider data for manual classification:
     write.csv(providerList, file = paste0(mp_wd_data, "ProviderList.csv"), row.names = FALSE) #save out for Blair for manual classification
@@ -550,7 +551,7 @@ sitePoints <- st_as_sf(sitesData, coords = c("x_long", "y_lat"), crs = 4269)
   #Crashes when I try to do it all at once. SO, loop? 
   
   #first one outside of loop to create SF onto which to bind
-  statesList <- unique(huc12$states) %>% subset(!is.na(statesList) & statesList %notin% c("MEX", "BC"))
+  statesList <- unique(huc12$states) %>% subset(!is.na(.) & . %notin% c("MEX", "BC"))
   statesSel = statesList[1]
   statesIncl <- unlist(strsplit(statesSel, ","))
   

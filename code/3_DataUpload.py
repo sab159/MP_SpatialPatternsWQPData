@@ -23,8 +23,8 @@ from arcgis import GIS
 # Connect to AGOL -
 #  This requires that the code is being run within an ArcGIS Pro environment.
 #  The credentials associated with the ArcGIS session will be accessed. 
-#  Verify that the user whose credentials are being accessed 
-#  has write permission for the hosted feature layers to be updated. 
+#  Verify that the user whose credentials are being accessed has write permission for the hosted feature layers to be updated. 
+# 
 #  Alternative authentication methods here: 
 #  https://github.com/sab159/ArcGIS-PythonAPI/blob/master/1-Connecting-to-AGOL-via-the-GIS-object.ipynb
 
@@ -40,10 +40,21 @@ polygonUpdate = "..\\data\\HUC12AllData.shp" #Does this need to be a zip instead
 pointHFL = gis.content.get('9a7c73c6dc1b494286d99fe9990db090') #object id for previously created hosted feature layer
 polygonHFL = gis.content.get('52a327a928574b188e0b2cc6b6deaaed') #object id for previously created hosted feature layer
 
+### Define desired properites for Hosted Feature Layer items ###################
+# Set layer view definition to control visible fields.
+# https://developers.arcgis.com/python/guide/updating-feature-layer-properties/
+
+# pointProperties
+# 
+# polyProperties 
+
 ### Update Hosted Feature Layers with local files ##############################
 
 pointHFL.update({}, r"..\\data\\WQPSiteData.csv")
 polygonHFL.update({}, r"..\\data\\HUC12AllData.shp") 
+
+# pointHFL.update({}, r"..\\data\\WQPSiteData.csv", item_properties = pointProperties)
+# polygonHFL.update({}, r"..\\data\\HUC12AllData.shp", item_properties = polyProperties) 
 
 
 

@@ -605,7 +605,7 @@ EthnicityVars = c("B03001_001E", "B03001_002E", "B03001_003E")
 IncomeVars = c("B19001_001E", "B19001_002E", "B19001_003E", "B19001_004E", "B19001_005E",
                "B19001_006E", "B19001_007E", "B19001_008E", "B19001_009E", "B19001_010E",
                "B19001_011E", "B19001_012E", "B19001_013E", "B19001_014E", "B19001_015E",
-               "B19001_016E", "B19001_017E") 
+               "B19001_016E", "B19001_017E", MedHHInc) 
 
 # NOTE: Poverty vars being ommitted to avoid aggregations of aggregations. Focus on HH income instead. 
 #table B17001 - poverty status - https://censusreporter.org/tables/B17001/
@@ -660,29 +660,30 @@ acsIncome <- get_acs(geography = "block group", variables = IncomeVars, state = 
                      year = acsEndYear, survey = paste0("acs", acsSpan), 
                      geometry = FALSE, keep_geo_vars = TRUE)
 
-BGIncome <- acsIncome %>% mutate(HHIncome = ifelse(variable == "B19001_001", "Total_HH", #name ranges by upper limit (thousands of dollars)
-                                                   ifelse(variable == "B19001_002", "hh10",
-                                                          ifelse(variable == "B19001_003", "hh15",
-                                                                 ifelse(variable == "B19001_004", "hh20",
-                                                                        ifelse(variable ==  "B19001_005", "hh25",
-                                                                               ifelse(variable == "B19001_006", "hh30",
-                                                                                      ifelse(variable == "B19001_007", "hh35",
-                                                                                             ifelse(variable == "B19001_008", "hh40",
-                                                                                                    ifelse(variable == "B19001_009", "hh45",
-                                                                                                           ifelse(variable == "B19001_010", "hh50",
-                                                                                                                  ifelse(variable == "B19001_011", "hh60",
-                                                                                                                         ifelse(variable == "B19001_012", "hh75",
-                                                                                                                                ifelse(variable == "B19001_013", "hh100",
-                                                                                                                                       ifelse(variable == "B19001_014", "hh125",
-                                                                                                                                              ifelse(variable == "B19001_015", "hh150", 
-                                                                                                                                                     ifelse(variable == "B19001_016", "hh200",
-                                                                                                                                                            ifelse(variable == "B19001_017", "hh200more", NA)))))))))))))))))) %>% 
+BGIncome <- acsIncome %>% mutate(HHIncome = ifelse(variable == "B19013_001", "MedianHHInc", 
+                                                   ifelse(variable == "B19001_001", "Total_HH", #name ranges by upper limit (thousands of dollars)
+                                                          ifelse(variable == "B19001_002", "hh10",
+                                                                 ifelse(variable == "B19001_003", "hh15",
+                                                                        ifelse(variable == "B19001_004", "hh20",
+                                                                               ifelse(variable ==  "B19001_005", "hh25",
+                                                                                      ifelse(variable == "B19001_006", "hh30",
+                                                                                             ifelse(variable == "B19001_007", "hh35",
+                                                                                                    ifelse(variable == "B19001_008", "hh40",
+                                                                                                           ifelse(variable == "B19001_009", "hh45",
+                                                                                                                  ifelse(variable == "B19001_010", "hh50",
+                                                                                                                         ifelse(variable == "B19001_011", "hh60",
+                                                                                                                                ifelse(variable == "B19001_012", "hh75",
+                                                                                                                                       ifelse(variable == "B19001_013", "hh100",
+                                                                                                                                              ifelse(variable == "B19001_014", "hh125",
+                                                                                                                                                     ifelse(variable == "B19001_015", "hh150", 
+                                                                                                                                                            ifelse(variable == "B19001_016", "hh200",
+                                                                                                                                                                   ifelse(variable == "B19001_017", "hh200more", NA))))))))))))))))))) %>% 
   select(GEOID, NAME, HHIncome, estimate, moe) %>% #drop variable code (now in 'race') 
   pivot_wider(id_cols = !moe, names_from = HHIncome, values_from = estimate) %>% #id_cols expression will group by GEOID & name and drop moe. Sum will total up values from "Multiple Races" 
   mutate(d0to24k = (hh10 + hh15 + hh20 + hh25), d25to49k = (hh30 + hh35 + hh40 + hh45 + hh50),
          d50to74k = (hh60 + hh75), d75to99k = hh100, d100to124k = hh125, d125to150k = hh150,
          d150kmore = (hh200 + hh200more)) %>% #reclassify into equal interval ($25k) buckets 
-  select(GEOID, NAME, Total_HH, d0to24k, d25to49k, d50to74k, d75to99k, d100to124k, d125to150k, d150kmore)
+  select(GEOID, NAME, Total_HH, MedianHHInc, d0to24k, d25to49k, d50to74k, d75to99k, d100to124k, d125to150k, d150kmore) 
 
 # OMITTING tenure. Can re-add if desired in the future. 
 # acsHomeownership <- get_acs(geography = "block group", variables = HomeOwnershipVars, state = statenums,
@@ -725,9 +726,9 @@ TractEthnicity <- acsEthnicity %>% mutate(ethnicity = ifelse(variable == "B03001
 
 #consolidate blockgroup vars
 acsBGData <- merge(BGRace, BGIncome, by = "GEOID") %>% #merge(BGHomeownership, by = "GEOID") %>% 
-  mutate(NAME = NAME.x) %>% 
-  select(GEOID, NAME, Total_Population, White, Black, Native, Asian, Pacific_Islander, Other, Multiple_Races,
-         Total_HH, d0to24k, d25to49k, d50to74k, d75to99k, d100to124k, d125to150k, d150kmore)
+              mutate(NAME = NAME.x) %>% 
+              select(GEOID, NAME, Total_Population, White, Black, Native, Asian, Pacific_Islander, Other, Multiple_Races,
+                     Total_HH, MedianHHInc, d0to24k, d25to49k, d50to74k, d75to99k, d100to124k, d125to150k, d150kmore)
 #Total_Housing_Units, Owner, Renter) 
 
 #match with blockgroup geometry
@@ -1108,7 +1109,190 @@ gc()
     
     good.sf <- huc12demo_distinct %>% filter(huc12 %notin% replicatedHUCS)
     huc12.demographics <- rbind(good.sf, check.fix) %>% .[,1:20]  #94572. Yay! Drop geometry column
+
+# --- Handle Median HH Income & add --------------------------------------------  
     
+ # This function should handle it - Define
+    
+    bgIncome_to_hucIncome <- function(census_sf, huc_sf) {
+      # Set up
+      # Slim down sfs to only necessary fields
+      census_sf <- census_sf %>% select(Total_HH, MedianHHInc) 
+      huc_sf <- huc_sf %>% select(huc12, geometry)
+      
+      #Create loop:
+      huc8 <- unique(substr(huc_sf$huc12, 1, 8))
+      
+      #First one outside loop to create sf onto which to bind
+      # Isolate a subset to ease computational load. And simplify features.
+      huc8OfInt <- huc8[1]
+      huc_subset <- huc_sf %>% filter(substr(huc_sf$huc12,1, 8) == huc8OfInt) %>% 
+                               st_simplify(dTolerance = 100) #100m tolerance still looks good but is a quarter the size. 
+      census_subset <- census_sf %>% filter(lengths(st_intersects(., huc_subset)) > 0) %>% 
+                                     st_simplify(dTolerance = 50) #Less benefit but still looks good. 
+      
+      # Determine proportional areal overlap of BGs and HUCs
+      census_subset$area <- st_area(census_subset$geometry)
+      census.int <- st_intersection(huc_subset, census_subset)
+      census.int$newArea <- st_area(census.int$geometry)
+      census.int$perArea <- as.numeric(round(census.int$newArea/census.int$area*100,2))
+      
+      # Calculate income contribution of each intersecting BG:  
+      # median HH income * # of households attributed to HUC
+      # Assume spatially homogenous distribution of HHs - HH proportionate to intersect area. 
+      census.int <- census.int %>% mutate(HHCount = Total_HH * perArea, # Number of households in subset assuming homogenous spatial distribution
+                                          IncomeContribution = HHCount * MedianHHInc) # Total household income contribution of BG section
+      
+      # Take weighted mean of income contribution of each intersecting BG to get median H income for the subwatershed
+      hucIncome_subset <- census.int %>% group_by(huc12) %>% 
+                          summarise(nHH = sum(HHCount, na.rm = TRUE),
+                                    totalInc = sum(IncomeContribution, na.rm = TRUE),
+                                    meanMedHHInc = totalInc/nHH) %>%
+                          select(huc12, meanMedHHInc) %>% 
+                          st_drop_geometry()
+      
+      hucIncome <- hucIncome_subset
+      
+      # Now loop through the rest
+      for (i in 2:length(huc8)) { #first one outside of loop
+        
+        # Isolate a subset to ease computational load. And simplify features. 
+        huc8OfInt <- huc8[i]
+        huc_subset <- huc_sf %>% filter(substr(huc_sf$huc12,1, 8) == huc8OfInt) %>% 
+                                 st_simplify(dTolerance = 100) #100m tolerance still looks good but is a quarter the size. 
+        census_subset <- census_sf %>% filter(lengths(st_intersects(., huc_subset)) > 0) %>% 
+                                       st_simplify(dTolerance = 50) #Less benefit but still looks good. 
+        
+        
+        # Determine proportional areal overlap of BGs and HUCs
+        census_subset$area <- st_area(census_subset$geometry)
+        census.int <- st_intersection(huc_subset, census_subset)
+        census.int$newArea <- st_area(census.int$geometry)
+        census.int$perArea <- as.numeric(round(census.int$newArea/census.int$area*100,2))
+        
+        # Calculate income contribution of each intersecting BG:  
+        # median HH income * # of households attributed to HUC
+        # Assume spatially homogenous distribution of HHs - HH proportionate to intersect area. 
+        census.int <- census.int %>% mutate(HHCount = Total_HH * perArea, # Number of households in subset assuming homogenous spatial distribution
+                                            IncomeContribution = HHCount * MedianHHInc) # Total household income contribution of BG section
+        
+        # Take weighted mean of income contribution of each intersecting BG to get median H income for the subwatershed
+        hucIncome_subset <- census.int %>%
+                            st_drop_geometry() %>% 
+                            group_by(huc12) %>%
+                            summarise(nHH = sum(HHCount, na.rm = TRUE),
+                                      totalInc = sum(IncomeContribution, na.rm = TRUE),
+                                      meanMedHHInc = totalInc/nHH) %>%
+                            select(huc12, meanMedHHInc) 
+        
+        #Bind up for saveout
+        hucIncome <- rbind(hucIncome, hucIncome_subset)
+        
+        #Report where we are
+        print(paste0(round(i*100/length(huc8), 2), "% complete"))
+      }
+      
+      #return compiled incomes    
+      return(hucIncome)
+    }
+    
+# Not as a function because that's safer if something breaks mid loop
+  census_sf <- bgGeoData
+  huc_sf <- huc12 
+  
+  census_sf <- census_sf %>% select(Total_HH, MedianHHInc) 
+  huc_sf <- huc_sf %>% select(huc12, geometry)
+  
+  #Create loop:
+  huc8 <- unique(substr(huc_sf$huc12, 1, 8))
+  
+  #First one outside loop to create sf onto which to bind
+  # Isolate a subset to ease computational load. And simplify features.
+  huc8OfInt <- huc8[1]
+  huc_subset <- huc_sf %>% filter(substr(huc_sf$huc12,1, 8) == huc8OfInt) %>% 
+    st_simplify(dTolerance = 100) #100m tolerance still looks good but is a quarter the size. 
+  census_subset <- census_sf %>% filter(lengths(st_intersects(., huc_subset)) > 0) %>% 
+    st_simplify(dTolerance = 50) #Less benefit but still looks good. 
+  
+  # Determine proportional areal overlap of BGs and HUCs
+  census_subset$area <- st_area(census_subset$geometry)
+  census.int <- st_intersection(huc_subset, census_subset)
+  census.int$newArea <- st_area(census.int$geometry)
+  census.int$perArea <- as.numeric(round(census.int$newArea/census.int$area*100,2))
+  
+  # Calculate income contribution of each intersecting BG:  
+  # median HH income * # of households attributed to HUC
+  # Assume spatially homogenous distribution of HHs - HH proportionate to intersect area. 
+  census.int <- census.int %>% mutate(HHCount = Total_HH * perArea, # Number of households in subset assuming homogenous spatial distribution
+                                      IncomeContribution = HHCount * MedianHHInc) # Total household income contribution of BG section
+  
+  # Take weighted mean of income contribution of each intersecting BG to get median H income for the subwatershed
+  hucIncome_subset <- census.int %>% group_by(huc12) %>% 
+    summarise(nHH = sum(HHCount, na.rm = TRUE),
+              totalInc = sum(IncomeContribution, na.rm = TRUE),
+              meanMedHHInc = totalInc/nHH) %>%
+    select(huc12, meanMedHHInc) %>% 
+    st_drop_geometry()
+  
+  hucIncome <- hucIncome_subset
+  
+  # Now loop through the rest
+  for (i in 2:length(huc8)) { #first one outside of loop
+    
+    # Isolate a subset to ease computational load. And simplify features. 
+    huc8OfInt <- huc8[i]
+    huc_subset <- huc_sf %>% filter(substr(huc_sf$huc12,1, 8) == huc8OfInt) %>% 
+      st_simplify(dTolerance = 100) #100m tolerance still looks good but is a quarter the size. 
+    census_subset <- census_sf %>% filter(lengths(st_intersects(., huc_subset)) > 0) %>% 
+      st_simplify(dTolerance = 50) #Less benefit but still looks good. 
+    
+    
+    # Determine proportional areal overlap of BGs and HUCs
+    census_subset$area <- st_area(census_subset$geometry)
+    census.int <- st_intersection(huc_subset, census_subset)
+    census.int$newArea <- st_area(census.int$geometry)
+    census.int$perArea <- as.numeric(round(census.int$newArea/census.int$area*100,2))
+    
+    # Calculate income contribution of each intersecting BG:  
+    # median HH income * # of households attributed to HUC
+    # Assume spatially homogenous distribution of HHs - HH proportionate to intersect area. 
+    census.int <- census.int %>% mutate(HHCount = Total_HH * perArea, # Number of households in subset assuming homogenous spatial distribution
+                                        IncomeContribution = HHCount * MedianHHInc) # Total household income contribution of BG section
+    
+    # Take weighted mean of income contribution of each intersecting BG to get median H income for the subwatershed
+    hucIncome_subset <- census.int %>%
+      st_drop_geometry() %>% 
+      group_by(huc12) %>%
+      summarise(nHH = sum(HHCount, na.rm = TRUE),
+                totalInc = sum(IncomeContribution, na.rm = TRUE),
+                meanMedHHInc = totalInc/nHH) %>%
+      select(huc12, meanMedHHInc) 
+    
+    #Bind up for saveout
+    hucIncome <- rbind(hucIncome, hucIncome_subset)
+    
+    #Report where we are
+    print(paste0(round(i*100/length(huc8), 2), "% complete"))
+  }
+    
+    
+ # Run function
+    # #TEMP LOAD
+    # load(file = paste0(mp_wd_data, "TEMPacsBGData.RData")); load(file = paste0(mp_wd_data, "TEMPacsTractData.RData")); load(file = paste0(mp_wd_data, "TEMPbgGeoData.RData")); load(file = paste0(mp_wd_data, "TEMPtractGeoData.RData")); load(file = paste0(mp_wd_data, "TEMPhuc12.RData"))
+    # huc12 <- huc12 %>% select(huc12, name, states, EPAregion, areasqkm, tohucs)
+    
+  #IF run as function: 
+  #huc12Income <- bgIncome_to_hucIncome(bgGeoData, huc12) #Takes a while. Like more than a day. Not sure where it could be made less computationally intense...Then again, only has to run once a year. 
+  
+  #If run not as function: 
+   huc12income <- hucIncome 
+   save(huc12income, file = paste0(mp_wd_data, "TEMPhuc12Income.RData")) #TEMP
+
+   
+ # Merge with other demographics
+    
+   huc12.demographics <- huc12.demographics %>% merge(., huc12income, by = "huc12", all.x = TRUE)
+        
 # --- Combine with the EPA-enriched metadata -----------------------------------
     
     huc12 <- merge(huc12_epa, huc12.demographics, by = "huc12", all.x = TRUE)
@@ -1195,7 +1379,8 @@ gc()
   #THIS WAS MOVED TO EARLIER BEFORE RECORDS WERE CONSOLIDATED!
     # to <- huc12sites %>% select(huc12, tohucs) %>% st_drop_geometry() %>% #need to have only one geometric object for merge
     #                      mutate(tohucs = ifelse(huc12 == "040203000200", "LAKE SUPERIOR", tohucs)) #manual fix for Isle Royal - lacks 'tohuc' value
-    
+  # # load:
+  # to <- read.csv(paste0(mp_wd_data, "ToHUC.csv"))
 
   huc12sites_to <- merge(x = huc12sites, y = to, by.x = "huc12", by.y = "tohuc", all.x = TRUE) %>% 
                    rename(fromhuc = huc12.y) %>% st_drop_geometry() #pull huc12s for fromhuc column! And it can just be a df - we'll merge back onto sf later. 

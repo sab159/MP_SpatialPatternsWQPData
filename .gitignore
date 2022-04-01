@@ -5,3 +5,5 @@ data/WQPSiteData.csv
 data/parameterPrevalence.csv
 data/ProviderList.csv
 data/TEMP_NewProvidersToClassify.csv
+data/HUC12Metadata*
+data/AllWQPSiteMetadata.csv

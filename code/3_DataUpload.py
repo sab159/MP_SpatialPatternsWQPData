@@ -32,30 +32,33 @@ gis = GIS('pro')
 
 ### Set paths ##################################################################
 
-# Local data to upload (ENDED UP JUST PASTING BELOW)
+# Local data to upload 
 pointUpdate = "..\\data\\WQPSiteData.csv"
-polygonUpdate = "..\\data\\HUC12AllData.shp" #Does this need to be a zip instead? 
+
+# Polygons (.shp) need to be a zipfile?
+from zipfile import ZipFile
+shpZip = ZipFile(".\\data\\HUC12AllData.zip", 'w')
+#Add .shp files
+shpZip.write('.\\data\\HUC12AllData.shp')
+shpZip.write('.\\data\\HUC12AllData.shx')
+shpZip.write('.\\data\\HUC12AllData.dbf')
+shpZip.write('.\\data\\HUC12AllData.prj')
+# close the zip
+shpZip.close()
+polygonUpdate = ".\\data\\HUC12AllData.zip"
 
 # Hosted Feature Layers
 pointHFL = gis.content.get('9a7c73c6dc1b494286d99fe9990db090') #object id for previously created hosted feature layer
 polygonHFL = gis.content.get('52a327a928574b188e0b2cc6b6deaaed') #object id for previously created hosted feature layer
 
-### Define desired properites for Hosted Feature Layer items ###################
-# Set layer view definition to control visible fields.
-# https://developers.arcgis.com/python/guide/updating-feature-layer-properties/
+### Overwrite feature layer with updated local files ######################################
+from arcgis.features import FeatureLayerCollection
 
-# pointProperties
-# 
-# polyProperties 
+#Access the layers
+pointFLC = FeatureLayerCollection.fromitem(pointHFL)
+polyFLC = FeatureLayerCollection.fromitem(polygonHFL)
 
-### Update Hosted Feature Layers with local files ##############################
-
-pointHFL.update({}, r"..\\data\\WQPSiteData.csv")
-polygonHFL.update({}, r"..\\data\\HUC12AllData.shp") 
-
-# pointHFL.update({}, r"..\\data\\WQPSiteData.csv", item_properties = pointProperties)
-# polygonHFL.update({}, r"..\\data\\HUC12AllData.shp", item_properties = polyProperties) 
-
-
-
+#Overwrite - troubleshooting here :https://doc.arcgis.com/en/arcgis-online/manage-data/manage-hosted-feature-layers.htm
+pointFLC.manager.overwrite(pointUpdate)
+polyFLC.manager.overwrite(polygonUpdate) # can be finnicky - alternative option to manually update from service layer overview page when logged into AGOL as an editor
 

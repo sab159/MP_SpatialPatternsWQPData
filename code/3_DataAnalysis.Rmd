@@ -23,7 +23,6 @@ setwd(dirname(source_path))
 mp_wd_data <- paste0("..\\data\\")
 
 # --- Load libraries -----------------------------------------------------------
-
   library(tidyverse)
   library(readxl)
   library(dataRetrieval)
@@ -933,100 +932,122 @@ Data provided through the WQP represent a variety of provider types: federal, tr
 # Income composition of monitored vs. unmonitored HUCS
 
   # Overall
-  monitoringIncome <- huc12.df %>% select(huc12, StatAbb, EPAregn, monitrd, 
+  monitoringIncome <- huc12.df %>% select(huc12, StatAbb, EPAregn, monitrd, mnMdHHI,
                                           d0to24k, d25t49k, d50t74k, d75t99k, 
-                                          d100124, d125150, d150kmr, Totl_HH)
+                                          d100124, d125150, d150kmr, Totl_HH) %>% 
+                                   mutate(mnMdHHI = ifelse(mnMdHHI < 5000, NA, mnMdHHI)) #set values under 5k to NA because they're flukes
+
+
+
+  compareMedHHI <- monitoringIncome %>% group_by(monitrd) %>% 
+                                        summarise(mean_mnMdHHI = mean(mnMdHHI, na.rm = TRUE),
+                                                  median_mnMdHHI = median(mnMdHHI, na.rm = TRUE))
+
+  ggplot(subset(monitoringIncome, monitrd != "NA"), aes(x = monitrd, y = mnMdHHI)) + 
+           geom_jitter(aes(color = monitrd), alpha = 0.1) +
+           scale_color_manual(limits = c("monitored", "unmonitored"),
+                              values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
+           geom_boxplot(alpha = 0.7, outlier.shape = NA) + 
+           ylim(0, 200000) + 
+           labs(title = "Median income in monitored and unmonitored subwatersheds",
+                x = "", y = "Median Household Income ($)") +
+           theme(legend.position = "none")
+    
+
+  # By state
+
+  # By EPA Region
 
   # Calculate median income per subwatershed (use midpoint of brackets & num HHs as frequency)
-
-    # Calculate cumulative percent of housholds by income bracket
-    cumPerIn <- monitoringIncome %>% mutate(cum24k = d0to24k, #cumulative # of HH
-                                            cum49k = cum24k+d25t49k,
-                                            cum74k = cum49k+d50t74k,
-                                            cum99k = cum74k+d75t99k,
-                                            cum124k = cum99k+d100124,
-                                            cum150k = cum124k+d125150,
-                                            cum150up = cum150k+d150kmr,
-                                            medHH = Totl_HH/2,
-                                            cumPer24k = cum24k/cum150up, #cumulative percent of HH 
-                                            cumPer49k = cum49k/cum150up,
-                                            cumPer74k = cum74k/cum150up,
-                                            cumPer99k = cum99k/cum150up,
-                                            cumPer124k = cum124k/cum150up,
-                                            cumPer150k = cum150k/cum150up,
-                                            cumPer150up = cum150up/cum150up) %>%
-                                      select(huc12, cumPer24k:cumPer150up)
-    
-    # Identify bracket into which median household falls & assign midpoint as median income for subwatershed - QUITE SLOW
-    medianIn <- cumPerIn %>% rowwise() %>%
-                             summarise(huc12 = huc12,
-                                       # selects lower of columns closest to median cumulative percent
-                                       median_col_index = which.min(abs(c_across(cumPer24k:cumPer150up) - 0.5)) + 1, 
-                                       # pull name of bracket to which median household belongs
-                                       medianIncomeBracket = colnames(.[median_col_index])) %>%
-                              # Assign bracket midpoint as subwatershed median income
-                              mutate(medianIncomeVal = case_when(medianIncomeBracket == "cumPer24k" ~ 24000/2,
-                                                       medianIncomeBracket == "cumPer49k" ~ (49000+25000)/2,
-                                                       medianIncomeBracket == "cumPer74k" ~ (74000+50000)/2,
-                                                       medianIncomeBracket == "cumPer99k" ~ (99000+75000)/2,
-                                                       medianIncomeBracket == "cumPer124k" ~ (124000+100000)/2,
-                                                       medianIncomeBracket == "cumPer150k" ~ (125000+150000)/2,
-                                                       medianIncomeBracket == "cumPer150up" ~ (150000)))
-    summary(medianIn)
-    bkup <- medianIn
-    
-    hucMedInc <- medianIn %>% select(huc12, medianIncomeVal) %>% merge(., huc12.df, by = "huc12", all.y = TRUE)
-  
-# saveout if desired because it takes a while to recreate
-  save(medianIn, file = paste0(mp_wd_data, "TEMPmedianIn.RData"))
-  load(file = paste0(mp_wd_data, "TEMPmedianIn.RData"))
-  
-  hucMedInc %>% filter(monitrd == "monitored") %>% select(medianIncomeVal) %>% summary()
-  hucMedInc %>% filter(monitrd == "unmonitored") %>% select(medianIncomeVal) %>% summary()
-
-  ggplot(subset(hucMedInc, monitrd != "NA"), aes(x = monitrd, y = medianIncomeVal)) +
-    geom_jitter(aes(color = monitrd), alpha = 0.1) + 
-    scale_color_manual(limits = c("monitored", "unmonitored"),
-                       values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
-    geom_boxplot(alpha = 0.6) + 
-    labs(x = "", y = "Median Household Income ($)", 
-         title = "Median income in monitored and unmonitored subwatersheds") +
-    theme(legend.position = "none")
-  
-  # By State
-    MedIncByState <- hucMedInc %>% group_by(StatAbb, monitrd) %>% 
-                                   summarise(median_medianInc = median(medianIncomeVal, na.rm = TRUE),
-                                             mean_medianInc = mean(medianIncomeVal, na.rm = TRUE)) 
-    
-    MedIncByState.plot <- ggplot(data = subset(MedIncByState, monitrd != "NA"), 
-                                 aes(x = StatAbb, y = mean_medianInc, fill = monitrd)) +
-                                 geom_bar(stat = "identity", width = 0.7, position = position_dodge(width = 0.8)) + 
-                                 scale_fill_manual(limits = c("monitored", "unmonitored"),
-                                                   values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
-                                 scale_x_discrete(limits = stateAbbOrder) +
-                                 labs(x = "State", y = "Average median HH income of subwatersheds ($)",
-                                      title = "Household Income of monitored and unmonitored subwatersheds by state") + 
-                                 theme(axis.text.x = element_text(angle = 90, vjust = 0.2, hjust = 1),
-                                       legend.title = element_blank()) 
-    print(MedIncByState.plot)  
-  
-  # By Region
-    MedIncByRegion <- hucMedInc %>% group_by(EPAregn, monitrd) %>% 
-                                    summarise(median_medianInc = median(medianIncomeVal, na.rm = TRUE),
-                                              mean_medianInc = mean(medianIncomeVal, na.rm = TRUE)) 
-    
-     
-    MedIncByRegion.plot <- ggplot(data = subset(MedIncByRegion, monitrd != "NA"), 
-                                 aes(x = EPAregn, y = mean_medianInc, fill = monitrd)) +
-                                 geom_bar(stat = "identity", width = 0.7, position = position_dodge(width = 0.8)) + 
-                                 scale_fill_manual(limits = c("monitored", "unmonitored"),
-                                                   values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
-                                 scale_x_discrete(limits = EPARegionOrder) +
-                                 labs(x = "EPA Region", y = "Average median HH income of subwatersheds ($)",
-                                      title = "Household Income of monitored and unmonitored subwatersheds by region") + 
-                                 theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust = 1),
-                                       legend.title = element_blank()) 
-    print(MedIncByRegion.plot)  
+# 
+#     # Calculate cumulative percent of housholds by income bracket
+#     cumPerIn <- monitoringIncome %>% mutate(cum24k = d0to24k, #cumulative # of HH
+#                                             cum49k = cum24k+d25t49k,
+#                                             cum74k = cum49k+d50t74k,
+#                                             cum99k = cum74k+d75t99k,
+#                                             cum124k = cum99k+d100124,
+#                                             cum150k = cum124k+d125150,
+#                                             cum150up = cum150k+d150kmr,
+#                                             medHH = Totl_HH/2,
+#                                             cumPer24k = cum24k/cum150up, #cumulative percent of HH 
+#                                             cumPer49k = cum49k/cum150up,
+#                                             cumPer74k = cum74k/cum150up,
+#                                             cumPer99k = cum99k/cum150up,
+#                                             cumPer124k = cum124k/cum150up,
+#                                             cumPer150k = cum150k/cum150up,
+#                                             cumPer150up = cum150up/cum150up) %>%
+#                                       select(huc12, cumPer24k:cumPer150up)
+#     
+#     # Identify bracket into which median household falls & assign midpoint as median income for subwatershed - QUITE SLOW
+#     medianIn <- cumPerIn %>% rowwise() %>%
+#                              summarise(huc12 = huc12,
+#                                        # selects lower of columns closest to median cumulative percent
+#                                        median_col_index = which.min(abs(c_across(cumPer24k:cumPer150up) - 0.5)) + 1, 
+#                                        # pull name of bracket to which median household belongs
+#                                        medianIncomeBracket = colnames(.[median_col_index])) %>%
+#                               # Assign bracket midpoint as subwatershed median income
+#                               mutate(medianIncomeVal = case_when(medianIncomeBracket == "cumPer24k" ~ 24000/2,
+#                                                        medianIncomeBracket == "cumPer49k" ~ (49000+25000)/2,
+#                                                        medianIncomeBracket == "cumPer74k" ~ (74000+50000)/2,
+#                                                        medianIncomeBracket == "cumPer99k" ~ (99000+75000)/2,
+#                                                        medianIncomeBracket == "cumPer124k" ~ (124000+100000)/2,
+#                                                        medianIncomeBracket == "cumPer150k" ~ (125000+150000)/2,
+#                                                        medianIncomeBracket == "cumPer150up" ~ (150000)))
+#     summary(medianIn)
+#     bkup <- medianIn
+#     
+#     hucMedInc <- medianIn %>% select(huc12, medianIncomeVal) %>% merge(., huc12.df, by = "huc12", all.y = TRUE)
+#   
+# # saveout if desired because it takes a while to recreate
+#   save(medianIn, file = paste0(mp_wd_data, "TEMPmedianIn.RData"))
+#   load(file = paste0(mp_wd_data, "TEMPmedianIn.RData"))
+#   
+#   hucMedInc %>% filter(monitrd == "monitored") %>% select(medianIncomeVal) %>% summary()
+#   hucMedInc %>% filter(monitrd == "unmonitored") %>% select(medianIncomeVal) %>% summary()
+# 
+#   ggplot(subset(hucMedInc, monitrd != "NA"), aes(x = monitrd, y = medianIncomeVal)) +
+#     geom_jitter(aes(color = monitrd), alpha = 0.1) + 
+#     scale_color_manual(limits = c("monitored", "unmonitored"),
+#                        values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
+#     geom_boxplot(alpha = 0.6) + 
+#     labs(x = "", y = "Median Household Income ($)", 
+#          title = "Median income in monitored and unmonitored subwatersheds") +
+#     theme(legend.position = "none")
+#   
+#   # By State
+#     MedIncByState <- hucMedInc %>% group_by(StatAbb, monitrd) %>% 
+#                                    summarise(median_medianInc = median(medianIncomeVal, na.rm = TRUE),
+#                                              mean_medianInc = mean(medianIncomeVal, na.rm = TRUE)) 
+#     
+#     MedIncByState.plot <- ggplot(data = subset(MedIncByState, monitrd != "NA"), 
+#                                  aes(x = StatAbb, y = mean_medianInc, fill = monitrd)) +
+#                                  geom_bar(stat = "identity", width = 0.7, position = position_dodge(width = 0.8)) + 
+#                                  scale_fill_manual(limits = c("monitored", "unmonitored"),
+#                                                    values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
+#                                  scale_x_discrete(limits = stateAbbOrder) +
+#                                  labs(x = "State", y = "Average median HH income of subwatersheds ($)",
+#                                       title = "Household Income of monitored and unmonitored subwatersheds by state") + 
+#                                  theme(axis.text.x = element_text(angle = 90, vjust = 0.2, hjust = 1),
+#                                        legend.title = element_blank()) 
+#     print(MedIncByState.plot)  
+#   
+#   # By Region
+#     MedIncByRegion <- hucMedInc %>% group_by(EPAregn, monitrd) %>% 
+#                                     summarise(median_medianInc = median(medianIncomeVal, na.rm = TRUE),
+#                                               mean_medianInc = mean(medianIncomeVal, na.rm = TRUE)) 
+#     
+#      
+#     MedIncByRegion.plot <- ggplot(data = subset(MedIncByRegion, monitrd != "NA"), 
+#                                  aes(x = EPAregn, y = mean_medianInc, fill = monitrd)) +
+#                                  geom_bar(stat = "identity", width = 0.7, position = position_dodge(width = 0.8)) + 
+#                                  scale_fill_manual(limits = c("monitored", "unmonitored"),
+#                                                    values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
+#                                  scale_x_discrete(limits = EPARegionOrder) +
+#                                  labs(x = "EPA Region", y = "Average median HH income of subwatersheds ($)",
+#                                       title = "Household Income of monitored and unmonitored subwatersheds by region") + 
+#                                  theme(axis.text.x = element_text(angle = 45, vjust = 0.9, hjust = 1),
+#                                        legend.title = element_blank()) 
+#     print(MedIncByRegion.plot)  
 
 
   # Note - some HUCs have no households attributed to them (based on areal interpolation.) - What proportion of these are unmonitored??? 
@@ -1071,11 +1092,20 @@ popdens.df <- huc12.df %>% mutate(popDens = Ttl_Ppl/aresqkm) %>%
                                     ststtrb, popDens, monitrd) %>% 
                               filter(monitrd != "NA")
 
+  comparePopDens <- popdens.df %>% group_by(monitrd) %>% 
+                    summarise(med_popdens = median(popDens, na.rm = TRUE),
+                              mean_popdens = mean(popDens, na.rm = TRUE))
+  
   ggplot(popdens.df, aes(x = monitrd, y = popDens)) + 
-    geom_boxplot(alpha = 0.8) + 
+        geom_jitter(aes(color = monitrd), alpha = 0.1) +
+    scale_color_manual(limits = c("monitored", "unmonitored"),
+                        values = c(wes_palettes$Rushmore[4], wes_palettes$Rushmore[1])) +
+    geom_boxplot(alpha = 0.8, outlier.shape = NA) + 
     scale_y_log10() + 
     labs(title = "Population density of monitored vs. unmonitored subwatersheds",
-         x = "", y = "Population per sq. km.")
+         x = "", y = "Population per sq. km.") + 
+    theme(legend.position = "none")
+
 
 
 ```

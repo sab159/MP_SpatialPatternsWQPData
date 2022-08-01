@@ -9,8 +9,3 @@ Scripts should be run in this order:
 2_UpdateData.R - to analyze and create final outputs after script 1 is run and to update the monitoring coverage data between ACS data releases
 3_DataUpload.py - after each update to update the hosted feature layers on AGOL powering the dashboard with the local files created in the prior script
 3_DataAnalysis.Rmd - after each update or as desried to generate a summary document analysing the distribution of monitoring data
-
-** DOCUMENTATION FOLDER: ***
-** ADD METHODS DOCUMENT **
-** ADD PPT WITH FULL NOTES ** 
-
